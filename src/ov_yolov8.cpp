@@ -1,38 +1,21 @@
 #include "ov_yolov8.h"
 
+namespace fs = std::filesystem;
+
 
 // 全局变量
-std::vector<cv::Scalar> colors = { cv::Scalar(0, 0, 255) , cv::Scalar(0, 255, 0) , cv::Scalar(255, 0, 0) ,
-                               cv::Scalar(255, 100, 50) , cv::Scalar(50, 100, 255) , cv::Scalar(255, 50, 100) };
-
-
-std::vector<Scalar> colors_seg = { Scalar(255, 0, 0), Scalar(255, 0, 255), Scalar(170, 0, 255), Scalar(255, 0, 85),
-                                   Scalar(255, 0, 170), Scalar(85, 255, 0), Scalar(255, 170, 0), Scalar(0, 255, 0),
-                                   Scalar(255, 255, 0), Scalar(0, 255, 85), Scalar(170, 255, 0), Scalar(0, 85, 255),
-                                   Scalar(0, 255, 170), Scalar(0, 0, 255), Scalar(0, 255, 255), Scalar(85, 0, 255) };
-
-// 定义skeleton的连接关系以及color mappings
-std::vector<std::vector<int>> skeleton = { {16, 14}, {14, 12}, {17, 15}, {15, 13}, {12, 13}, {6, 12}, {7, 13}, {6, 7},
-                                          {6, 8}, {7, 9}, {8, 10}, {9, 11}, {2, 3}, {1, 2}, {1, 3}, {2, 4}, {3, 5}, {4, 6}, {5, 7} };
-
-std::vector<cv::Scalar> posePalette = {
-        cv::Scalar(255, 128, 0), cv::Scalar(255, 153, 51), cv::Scalar(255, 178, 102), cv::Scalar(230, 230, 0), cv::Scalar(255, 153, 255),
-        cv::Scalar(153, 204, 255), cv::Scalar(255, 102, 255), cv::Scalar(255, 51, 255), cv::Scalar(102, 178, 255), cv::Scalar(51, 153, 255),
-        cv::Scalar(255, 153, 153), cv::Scalar(255, 102, 102), cv::Scalar(255, 51, 51), cv::Scalar(153, 255, 153), cv::Scalar(102, 255, 102),
-        cv::Scalar(51, 255, 51), cv::Scalar(0, 255, 0), cv::Scalar(0, 0, 255), cv::Scalar(255, 0, 0), cv::Scalar(255, 255, 255)
-};
-
-std::vector<int> limbColorIndices = { 9, 9, 9, 9, 7, 7, 7, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16 };
-std::vector<int> kptColorIndices = { 16, 16, 16, 16, 16, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9 };
-
-
+std::vector<cv::Scalar> colors = { cv::Scalar(255, 0, 0) , cv::Scalar(0, 0, 255) , cv::Scalar(128, 128, 128)};
 const std::vector<std::string> class_names = { "B1", "B2", "B3", "B4", "B5", "B7",
-                                               "R1", "R2", "R3", "R4", "R5", "R7"};
-
-
+                                               "R1", "R2", "R3", "R4", "R5", "R7",
+                                               "N1", "N2", "N3", "N4", "N5", "N7"
+                                               "B8", "R8"};
 
 YoloModel::YoloModel()
 {
+    std::string isMakeDataset_str;
+    cfg.readConfigFile("../params/params.cfg", "ismakedataset", isMakeDataset_str);
+    isMakeDataset = (isMakeDataset_str == "true");
+    cfg.readConfigFile("../params/params.cfg", "makedatasetpath", makedatasetpath);
 
 }
 YoloModel::~YoloModel()
@@ -57,8 +40,10 @@ bool YoloModel::LoadDetectModel(const string& xmlName, string& device)
 }
 
 
-bool YoloModel::YoloDetectInfer(const Mat& src, double cof_threshold, double nms_area_threshold, Mat& dst, vector<Object>& vecObj)
+std::vector<std::string> YoloModel::YoloDetectInfer(const Mat& src, double cof_threshold, double nms_area_threshold, Mat& dst, vector<Object>& vecObj)
 {
+    std::vector<std::string> detectedLabels;
+
     int64 start = cv::getTickCount();
     // -------- Step 4.Read a picture file and do the preprocess --------
     // Preprocess the image
@@ -127,17 +112,69 @@ bool YoloModel::YoloDetectInfer(const Mat& src, double cof_threshold, double nms
     for (size_t i = 0; i < indices.size(); i++) {
         int index = indices[i];
         int class_id = class_ids[index];
-        rectangle(dst, boxes[index], colors[class_id % 6], 2, 8);
+        cv::Scalar color_;
+        if (class_names[class_id][0] == 'B') {
+            color_ = colors[0];
+        } else if (class_names[class_id][0] == 'R') {
+            color_ = colors[1];
+        } else if (class_names[class_id][0] == 'N') {
+            color_ = colors[2];
+        }else{
+            color_ = cv::Scalar(255, 255, 255);
+        }
+        rectangle(dst, boxes[index], color_, 2, 8);
         std::string label = class_names[class_id] + ":" + std::to_string(class_scores[index]).substr(0, 4);
-        Size textSize = cv::getTextSize(label, FONT_HERSHEY_SIMPLEX, 0.5, 1, 0);
-        Rect textBox(boxes[index].tl().x, boxes[index].tl().y - 15, textSize.width, textSize.height + 5);
-        cv::rectangle(dst, textBox, colors[class_id % 6], FILLED);
-        putText(dst, label, Point(boxes[index].tl().x, boxes[index].tl().y - 5), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(255, 255, 255));
-        std::cout<<label<<std::endl;
+        // Size textSize = cv::getTextSize(label, FONT_HERSHEY_SIMPLEX, 0.5, 1, 0);
+        // Rect textBox(boxes[index].tl().x, boxes[index].tl().y - 15, textSize.width, textSize.height + 5);
+        // cv::rectangle(dst, textBox, color_, FILLED);
+        putText(dst, label, Point(boxes[index].tl().x, boxes[index].tl().y - 5), FONT_HERSHEY_SIMPLEX, 1.5, color_, 5);
+
+        std::string labellist = class_names[class_id];
+        detectedLabels.push_back(labellist);
     }
     float t = (cv::getTickCount() - start) / static_cast<float>(cv::getTickFrequency());
 	putText(dst, cv::format("FPS: %.2f", 1.0 / t), cv::Point(20, 40), cv::FONT_HERSHEY_PLAIN, 2.0, cv::Scalar(255, 0, 0), 2, 8);
-    return true;
+
+
+    if(indices.size() && isMakeDataset)
+    {
+        // Append code to save results at the end of the function
+        std::string image_path = makedatasetpath + "/images/" + std::to_string(file_number) + ".jpg";
+        std::string label_path = makedatasetpath + "/labels/" + std::to_string(file_number) + ".txt";
+
+        // Ensure directories exist (create them if they don't)
+        fs::create_directories(makedatasetpath + "/images");
+        fs::create_directories(makedatasetpath + "/labels");
+
+        // 保存检测结果图像
+        cv::imwrite(image_path, src);
+
+        // 保存检测框和标签到文本文件
+        std::ofstream outfile(label_path);
+        for (size_t i = 0; i < indices.size(); ++i) {
+            int idx = indices[i];
+            Rect box = boxes[idx];
+            
+            // 归一化边界框坐标
+            float x_center = (box.x + box.width / 2.0) / src.cols;
+            float y_center = (box.y + box.height / 2.0) / src.rows;
+            float width_norm = box.width / static_cast<float>(src.cols);
+            float height_norm = box.height / static_cast<float>(src.rows);
+            
+            // 写入YOLO格式的标签信息
+            outfile << class_ids[idx] << " " << x_center << " " << y_center << " " << width_norm << " " << height_norm << std::endl;
+        }
+        outfile.close();
+
+        // 更新文件编号以供下次调用时使用
+        file_number++;
+    }
+
+
+
+    return detectedLabels;
+
+    // return true;
 }
 
 
